@@ -1,155 +1,25 @@
 
 let DRAWING_MODE_MARKER = "marker";
 let DRAWING_MODE_CIRCLE = "circle";
-let DRAWING_MODE_AREA = "area";
-let _fitBounds = true;
 
-function Circle(circleOptions, map) {
-    this.extend(Circle, google.maps.MVCObject);
-    _fitBounds = true;
-    let me = this;
-    this._radius = null;
-    this.map = map;
-    this._circle_opt = circleOptions;
-
-    if (this._radius != null) {
-        me._radius.unbind('center');
-        me.unbind('distance', me._radius);
-        me.unbind('bounds', me._radius);
-        me._radius.bindTo('center', me);
-        me._radius.unbind('map');
-    }
-
-    me._radius = new google.maps.Circle({
-        strokeColor: circleOptions.strokeColor,
-        strokeOpacity: circleOptions.strokeOpacity,
-        strokeWeight: circleOptions.strokeWeight,
-        fillColor: circleOptions.fillColor,
-        fillOpacity: circleOptions.fillOpacity,
-
-    });
-
-    me.set('distance', circleOptions.radius / 1000);
-    me.bindTo('bounds', this._radius);
-    me._radius.bindTo('center', this);
-    me._radius.bindTo('map', this);
-    me._radius.bindTo('radius', this);
-    me.addSizer_();
-}
-
-Circle.prototype.extend = function (obj1, obj2) {
-    return (function (object) {
-        var property;
-        for (property in object.prototype) {
-            this.prototype[property] = object.prototype[property];
-        }
-        return this;
-    }).apply(obj1, [obj2]);
-};
-
-Circle.prototype.distance_changed = function () {
-    this.set('radius', this.get('distance') * 1000);
-};
-
-Circle.prototype.addSizer_ = function () {
-    let me = this;
-    let svg = [
-        '<?xml version="1.0"?>',
-        '<svg width="16px" height="16px" viewBox="0 0 100 100" version="1.1" xmlns="http://www.w3.org/2000/svg">',
-        '<circle stroke="#003dd9" fill="white" stroke-width="10" cx="50" cy="50" r="35"/>',
-        '</svg>'
-    ].join('\n');
-
-    this._vertex = null;
-    this._vertex = new google.maps.Marker({
-        draggable: true,
-        icon: { url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg), scaledSize: new google.maps.Size(15, 15) },
-        raiseOnDrag: false
-    });
-
-    this._vertex.setCursor('col-resize');
-    this._vertex.bindTo('map', this);
-    this._vertex.bindTo('position', this, 'sizer_position');
-
-    google.maps.event.addListener(this._vertex, 'drag', (event) => {
-        this._vertex.setCursor('col-resize');
-        let pos = me.get('sizer_position');
-        let center = me.get('center');
-        let distance = this.distanceBetweenPoints_(center, pos);
-        distance = Math.round(distance * 100) / 100;
-        distance = google.maps.geometry.spherical.computeDistanceBetween(center, pos) / 1000;
-
-        if (me._circle_opt.minRadius != null && me._circle_opt.maxRadius != null) {
-            let min = me._circle_opt.minRadius / 1000;
-            let max = me._circle_opt.maxRadius / 1000;
-
-            if (max !== null) {
-                if (distance > max) {
-                    me.set('sizer_position', google.maps.geometry.spherical.computeOffset(center, max * 1000, google.maps.geometry.spherical.computeHeading(center, pos)));
-                }
-            }
-
-            if (min !== null) {
-                if (distance < min) {
-                    me.set('sizer_position', google.maps.geometry.spherical.computeOffset(center, min * 1000, google.maps.geometry.spherical.computeHeading(center, pos)));
-                }
-            }
-        }
-        me.setDistance();
-    });
-};
-
-Circle.prototype.center_changed = function () {
-
-    var bounds = this.get('bounds');
-    if (bounds) {
-        var lng = bounds.getNorthEast().lng();
-        var position = new google.maps.LatLng(this.get('center').lat(), lng);
-        this.set('sizer_position', position);
-        if (_fitBounds) {
-            this.map.fitBounds(bounds);
-            _fitBounds = false;
-        }
-    }
-};
-
-Circle.prototype.distanceBetweenPoints_ = function (p1, p2) {
-    if (!p1 || !p2) {
-        return 0;
-    }
-    var R = 6371;
-    var dLat = (p2.lat() - p1.lat()) * Math.PI / 180;
-    var dLon = (p2.lng() - p1.lng()) * Math.PI / 180;
-    var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(p1.lat() * Math.PI / 180) * Math.cos(p2.lat() * Math.PI / 180) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    var d = R * c;
-    return d;
-};
-
-Circle.prototype.setDistance = function () {
-    var me = this
-    var pos = this.get('sizer_position');
-    var center = this.get('center');
-    var distance = this.distanceBetweenPoints_(center, pos);
-    this.set('distance', distance);
-};
 
 function DrawingManager(map, opts) {
-    this.extend(DrawingManager, google.maps.OverlayView);
-    this.set('_opts', opts);
-    this.set('map', map);
 
+    this.extend(DrawingManager, google.maps.OverlayView);
+
+    this.map = map;
+    this._opts = opts;
     this._drawingType = opts.drawingMode || DRAWING_MODE_MARKER;
-    this._overlayEnableClick = opts.overlayEnableClick;
     this._fitBounds = opts._fitBounds || true;
     this.markerOptions = opts.markerOptions || {};
     this.circleOptions = opts.circleOptions || {};
-    this.areaOptions = opts.areaOptions || {};
-    this._setDrawingMode(this._drawingType);
+    this._enableDraw = opts.enableDraw;
+    this.radius = opts.circleOptions.radius;
+
 }
 
-
 DrawingManager.prototype.onAdd = function () {
+
     var me = this;
     google.maps.event.addListener(this.getMap(), 'click', function (event) {
         google.maps.event.trigger(me, 'click', event);
@@ -162,212 +32,334 @@ DrawingManager.prototype.onRemove = function () { };
 DrawingManager.prototype.draw = function () { };
 
 DrawingManager.prototype.setDrawingMode = function (drawingType) {
-    if (this._drawingType != drawingType) {
-        this._setDrawingMode(drawingType);
-    }
-}
-
-DrawingManager.prototype._setPosition = function (e) {
     let me = this;
-    this.set('position', null);
-
-    if (e) {
-        me.set('position', e.latLng);
-    }
-}
-
-DrawingManager.prototype.setPosition_ = function (latitude, longitude) {
-    let me = this;
-    me.set('position', null);
-    me.get('bounds');
-    me.set('position', new google.maps.LatLng(latitude, longitude));
-}
-
-DrawingManager.prototype.setEnabledClick = function (enabled) {
-    this._overlayEnableClick = enabled;
-}
-
-DrawingManager.prototype._unBindCenterMarker = function () {
-    if (this._centerMarker != null) {
-        this._centerMarker.unbindAll();
-        this._centerMarker.set('map', null);
-        this._centerMarker = null;
-    }
-}
-
-DrawingManager.prototype._unBinVertex = function () {
-    if (this.circle != undefined) {
-        this.circle._vertex.unbindAll();
-        this.circle._vertex.set('map', null);
-        this.circle._vertex = null;
-        this.circle.unbindAll();
-        this.circle.set('map', null);
-    }
-}
-
-DrawingManager.prototype._unBinCircle = function () {
-    if (this.circle != null) {
-        this.circle.unbindAll();
-        this.circle.set('map', null);
-    }
-}
-
-DrawingManager.prototype._BinToCircle = function () {
-    this.circle.bindTo('map', this);
-    this.circle.bindTo('center', this, 'position');
-    this.bindTo('distance', this.circle);
-    this.bindTo('bounds', this.circle);
-
-}
-
-DrawingManager.prototype._binToVertex = function () {
-    this._vertex.bindTo('map', this);
-    this._vertex.bindTo('position', this, 'sizer_position');
-}
-
-DrawingManager.prototype._binToCenterMarker = function () {
-    let me = this;
-    let map = this._map;
-
-    this._centerMarker.set('map', map);
-    this._centerMarker.bindTo('map', me);
-    this._centerMarker.bindTo('position', me);
-}
-
-DrawingManager.prototype._setDrawingMode = function (drawingType) {
-
     this._drawingType = drawingType;
 
     switch (drawingType) {
         case DRAWING_MODE_MARKER:
-            this._bindMarker();
+            me._bindMarker();
             break;
         case DRAWING_MODE_CIRCLE:
-            this._bindCircle(this);
+            me._bindCircle();
             break;
     }
 }
 
+DrawingManager.prototype._setPosition = function (e) {
+
+    let me = this;
+    me.position = null;
+
+    if (e) {
+        me.position = e.latLng;
+    }
+}
+
+DrawingManager.prototype.setPosition = function (lat, lng) {
+
+    let me = this;
+    me.position = null;
+
+    me.position = new google.maps.LatLng(lat, lng)
+
+}
+
+
+
 DrawingManager.prototype._bindMarker = function () {
-    var me = this;
-    var map = this._map;
 
-    this._centerMarker = null;
-    this.set('position', null);
+    let me = this;
 
-    if (this.circle != undefined) {
-        this.circle._vertex.unbindAll();
-        this.circle._vertex.set('map', null);
-        this.circle._vertex = null;
-        this.circle.unbindAll();
-        this.circle.set('map', null);
+    if (me._centerMarker) {
+        me._centerMarker.setMap(null);
+        google.maps.event.trigger(me, 'draw:marker_remove', null);
+    }
+
+    google.maps.event.clearListeners(me, 'click');
+
+
+    if (me.circle) {
+        me.circle.setMap(null);
+        me._vertexMarker.setMap(null);
     }
 
     var createCenterMarker = (e) => {
 
+        if (me._centerMarker) {
+            me._centerMarker.setMap(null);
+            me._centerMarker = null;
+            google.maps.event.trigger(me, 'draw:marker_remove', null);
+        }
+
         if (e) {
             me._setPosition(e);
         }
-        me._unBindCenterMarker();
 
-        this._centerMarker = new google.maps.Marker({
-            draggable: false,
-            zIndex: 9999999,
-            icon: this.markerOptions.iconUrl,
-            raiseOnDrag: false
-        });
+        if (me.circle) {
+            me.circle.setMap(null);
+            me._vertexMarker.setMap(null);
+        }
 
-        me._binToCenterMarker();
-        me._centerMarker.setCursor('default');
-        me._addListeners();
+
+        if (me.position) {
+            me._centerMarker = new google.maps.Marker({
+                draggable: false,
+                zIndex: 9999999,
+                position: me.position,
+                icon: me.markerOptions.iconUrl,
+                raiseOnDrag: false,
+                optimized: true,
+            });
+
+            me._centerMarker.setMap(me.map);
+            me.map.setCenter(me.position);
+            if (me.map.getZoom() < 9) {
+                me.map.setZoom(9);
+            }
+
+            google.maps.event.trigger(me, 'draw:marker_create', null);
+            me._centerMarker.setCursor('default');
+            me.position = null;
+        }
     }
 
-    if (!this._overlayEnableClick) {
-        createCenterMarker()
+    if (!this._enableDraw) {
+        createCenterMarker();
+        google.maps.event.clearListeners(me, 'click');
     }
 
     this.markerListener = google.maps.event.addListener(me, 'click', (event) => {
-        if (this._overlayEnableClick) {
+        event.stop();
+        if (this._enableDraw) {
             createCenterMarker(event)
         }
     });
 }
 
-DrawingManager.prototype._addListeners = function () {
-    var me = this;
-    google.maps.event.addListener(me._centerMarker, 'drag', function (event) {
-        google.maps.event.trigger(me, 'circle_centre_change', me._getInfo());
-    });
 
-    google.maps.event.addListener(me._centerMarker, 'dragend', function (event) {
-        google.maps.event.trigger(me, 'circle_center_complete', me._getInfo());
-    });
+DrawingManager.prototype.setEnableDraw = function (enabled) {
 
-    google.maps.event.addListener(me._centerMarker, 'click', function (event) {
-        google.maps.event.trigger(me, 'marker_click', me._getInfo());
-    });
-
-    google.maps.event.addListener(me._centerMarker, 'mouseover', function (event) {
-        google.maps.event.trigger(me, 'marker_mouseover', me._getInfo());
-    });
-
-    google.maps.event.addListener(me._centerMarker, 'mouseout', function (event) {
-        google.maps.event.trigger(me, 'marker_mouseout', me._getInfo());
-    });
+    this._enableDraw = enabled;
 }
 
 DrawingManager.prototype.remove = function () { }
 
-DrawingManager.prototype._bindCircle = function (drawing) {
+DrawingManager.prototype._bindCircle = function () {
 
     var me = this;
-    var _me = drawing;
 
-    if (this.circle != null) {
-        this.circle.unbindAll();
-        this.circle.set('map', null);
+    if (me.circle) {
+        me.circle.setMap(null);
+        me._vertexMarker.setMap(null);
+        google.maps.event.trigger(me, 'draw:circle_remove', null);
     }
 
-    this.circle = new Circle(this.circleOptions, this.map);
-    this.circle.bindTo('map', this);
-    this.circle.bindTo('center', this, 'position');
-    this.bindTo('distance', this.circle);
-    this.bindTo('bounds', this.circle);
+    if (me._centerMarker) {
+        me.circle = new google.maps.Circle({
+            strokeColor: me.circleOptions.strokeColor,
+            strokeOpacity: me.circleOptions.strokeOpacity,
+            strokeWeight: me.circleOptions.strokeWeight,
+            fillColor: me.circleOptions.fillColor,
+            fillOpacity: me.circleOptions.fillOpacity,
+            center: me._centerMarker.getPosition(),
+            radius: me.radius,
+            geodesic: false,
+            optimized: true,
+        });
 
-    if (_me._centerMarker) {
-        _me._centerMarker.setDraggable(true);
-        _me._centerMarker.setCursor('move');
+        me.circle.setMap(me.map);
+
+        google.maps.event.trigger(me, 'draw:circle_create', this._getInfo());
+
+        me.map.fitBounds(me.circle.getBounds());
+
+        me._createVertexMarker();
+
+        me._centerMarker.setDraggable(true);
+        me._centerMarker.setCursor('move');
+
+        me._centerMarkerAddEventListener();
     }
 
-    google.maps.event.addListener(this.circle._vertex, 'dragend', (event) => {
+}
 
-        google.maps.event.trigger(me, 'circle_radius_complete', this._getInfo());
+DrawingManager.prototype._createVertexMarker = function () {
+
+    let me = this;
+
+    me.to = null;
+    me.to = me.destination(this._centerMarker.getPosition(), 90, this.radius);
+
+
+    me.fillColor = 'white';
+
+    let svg = [
+        `<?xml version="1.0"?>`,
+        `<svg width="16px" height="16px" viewBox="0 0 100 100" version="1.1" xmlns="http://www.w3.org/2000/svg">`,
+        `<circle stroke="#003dd9" fill="${me.fillColor}" stroke-width="10" cx="50" cy="50" r="35"/>`,
+        `</svg>`
+    ].join('\n');
+
+    me._vertexMarker = new google.maps.Marker({
+        position: me.to,
+        draggable: true,
+        icon: { url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg), scaledSize: new google.maps.Size(15, 15) },
+        raiseOnDrag: false,
+        optimized: true,
     });
 
-    google.maps.event.addListener(this.circle._vertex, 'drag', (event) => {
 
-        let pixel = getXYbyEvent(event);
+    me._vertexMarker.setMap(me.map);
+    me._vertexMarker.setCursor('col-resize');
+    me._vertexMarkerAddEventListener();
+
+
+}
+
+DrawingManager.prototype._vertexMarkerAddEventListener = function () {
+
+    let me = this;
+
+    google.maps.event.addListener(me._vertexMarker, 'drag', (event) => {
+
+        let distance = me.getDistanceTo(me._centerMarker.getPosition(), event.latLng);
+
+        me.radius = distance;
+
+        if (me.circle) {
+            me.circle.setRadius(distance);
+        }
+
+        let pixel = me.getXYbyEvent(event);
         let ev = {
             pixel,
-            radius: this.circle.radius
+            radius: me.circle.getRadius()
         }
 
-        google.maps.event.trigger(me, 'circle_radius_change', ev);
+        google.maps.event.trigger(me, 'draw:circle_radius_change', ev);
 
     });
 
+    google.maps.event.addListener(me._vertexMarker, 'dragend', () => {
+        google.maps.event.trigger(me, 'draw:circle_radius_complete', this._getInfo());
+    });
 
-    google.maps.event.removeListener(this.markerListener);
-
-    var getXYbyEvent = function (event) {
-
-        let client = me.getProjection().fromLatLngToContainerPixel(event.latLng);
-        return {
-            clientX: client.x,
-            clientY: client.y
-        }
-    };
 }
+
+
+DrawingManager.prototype.getXYbyEvent = function (event) {
+
+    let me = this;
+
+    let client = me.getProjection().fromLatLngToContainerPixel(event.latLng);
+    return {
+        clientX: client.x,
+        clientY: client.y
+    }
+};
+
+DrawingManager.prototype._centerMarkerAddEventListener = function () {
+
+    let me = this;
+
+    google.maps.event.addListener(me._centerMarker, 'drag', function (event) {
+
+        me.circle.setCenter(event.latLng);
+
+        let to = me.destination(event.latLng, 90, me.radius);
+
+        if (me._vertexMarker) {
+            me._vertexMarker.setPosition(to);
+        }
+
+        google.maps.event.trigger(me, 'draw:circle_centre_change', me._getInfo());
+    });
+
+    google.maps.event.addListener(me._centerMarker, 'dragend', function (event) {
+        google.maps.event.trigger(me, 'draw:circle_center_complete', me._getInfo());
+    });
+
+    google.maps.event.addListener(me._centerMarker, 'click', function (event) {
+        google.maps.event.trigger(me, 'draw:marker_click', me._getInfo());
+    });
+
+    google.maps.event.addListener(me._centerMarker, 'mouseover', function (event) {
+        google.maps.event.trigger(me, 'draw:marker_mouseover', me._getInfo());
+    });
+
+    google.maps.event.addListener(me._centerMarker, 'mouseout', function (event) {
+        google.maps.event.trigger(me, 'draw:marker_mouseout', me._getInfo());
+    });
+
+}
+
+DrawingManager.prototype.destination = function (latlng, heading, distance) {
+
+    heading = (heading + 360) % 360;
+    var rad = Math.PI / 180,
+        radInv = 180 / Math.PI,
+        R = 6378137,
+        lon1 = latlng.lng() * rad,
+        lat1 = latlng.lat() * rad,
+        rheading = heading * rad,
+        sinLat1 = Math.sin(lat1),
+        cosLat1 = Math.cos(lat1),
+        cosDistR = Math.cos(distance / R),
+        sinDistR = Math.sin(distance / R),
+        lat2 = Math.asin(sinLat1 * cosDistR + cosLat1 *
+            sinDistR * Math.cos(rheading)),
+        lon2 = lon1 + Math.atan2(Math.sin(rheading) * sinDistR *
+            cosLat1, cosDistR - sinLat1 * Math.sin(lat2));
+    lon2 = lon2 * radInv;
+    lon2 = lon2 > 180 ? lon2 - 360 : lon2 < -180 ? lon2 + 360 : lon2;
+    return new google.maps.LatLng(lat2 * radInv, lon2)
+};
+
+DrawingManager.prototype.degreeToRad = function (degree) {
+
+    return Math.PI * degree / 180;
+},
+
+    DrawingManager.prototype._getRange = function (v, a, b) {
+
+        if (a != null) {
+            v = Math.max(v, a);
+        }
+        if (b != null) {
+            v = Math.min(v, b);
+        }
+        return v;
+    };
+
+DrawingManager.prototype._getLoop = function (v, a, b) {
+
+    while (v > b) {
+        v -= b - a
+    }
+    while (v < a) {
+        v += b - a
+    }
+    return v;
+};
+
+DrawingManager.prototype.getDistanceTo = function (point1, point2) {
+
+    let me = this;
+    point1.ln = me._getLoop(point1.lng(), -180, 180);
+    point1.lt = me._getRange(point1.lat(), -74, 74);
+    point2.ln = me._getLoop(point2.lng(), -180, 180);
+    point2.lt = me._getRange(point2.lat(), -74, 74);
+
+    var x1, x2, y1, y2;
+    x1 = this.degreeToRad(point1.ln);
+    y1 = this.degreeToRad(point1.lt);
+    x2 = this.degreeToRad(point2.ln);
+    y2 = this.degreeToRad(point2.lt);
+
+    return 6370996.81 * Math.acos((Math.sin(y1) * Math.sin(y2) + Math.cos(y1) * Math.cos(y2) * Math.cos(x2 - x1)));
+};
+
+
 
 DrawingManager.prototype.extend = function (obj1, obj2) {
     return (function (object) {
@@ -381,14 +373,15 @@ DrawingManager.prototype.extend = function (obj1, obj2) {
 
 DrawingManager.prototype._getInfo = function () {
 
+    let me = this;
+
     let position = {
-        latitude: this.position.lat(),
-        longitude: this.position.lng()
+        latitude: me._centerMarker.getPosition().lat(),
+        longitude: me._centerMarker.getPosition().lng()
     }
     let info = {
-        radius: this.circle.radius,
-        position,
-        latLng: this.position
+        radius: me.circle.getRadius(),
+        position
     };
 
     return info;
