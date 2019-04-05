@@ -1,26 +1,34 @@
 
 let DRAWING_MODE_MARKER = "marker";
 let DRAWING_MODE_CIRCLE = "circle";
+let DRAWING_MODE_AREA = "area";
 
 
 function DrawingManager(map, opts) {
 
-    this.extend(DrawingManager, google.maps.OverlayView);
+    let me = this;
+    me.extend(DrawingManager, google.maps.OverlayView);
 
-    this.map = map;
-    this._opts = opts;
-    this._drawingType = opts.drawingMode || DRAWING_MODE_MARKER;
-    this._fitBounds = opts._fitBounds || true;
-    this.markerOptions = opts.markerOptions || {};
-    this.circleOptions = opts.circleOptions || {};
-    this._enableDraw = opts.enableDraw;
-    this.radius = opts.circleOptions.radius;
+    me.map = map;
+    me._opts = opts;
+    me._drawingType = opts.drawingMode || DRAWING_MODE_MARKER;
+    me._fitBounds = opts._fitBounds || true;
+    me.markerOptions = opts.markerOptions || {};
+    me.circleOptions = opts.circleOptions || {};
+    me.areaOptions = opts.areaOptions || {};
+    me._enableDraw = opts.enableDraw;
+    me.radius = opts.circleOptions.radius;
+    isInit = true;
 
+    google.maps.event.addListener(me.map, 'idle', () => {
+        google.maps.event.trigger(me, 'draw:zoom_map', me.map.getZoom());
+    })
 }
 
 DrawingManager.prototype.onAdd = function () {
 
-    var me = this;
+    let me = this;
+
     google.maps.event.addListener(this.getMap(), 'click', function (event) {
         google.maps.event.trigger(me, 'click', event);
     });
@@ -32,7 +40,9 @@ DrawingManager.prototype.onRemove = function () { };
 DrawingManager.prototype.draw = function () { };
 
 DrawingManager.prototype.setDrawingMode = function (drawingType) {
+
     let me = this;
+
     this._drawingType = drawingType;
 
     switch (drawingType) {
@@ -41,6 +51,12 @@ DrawingManager.prototype.setDrawingMode = function (drawingType) {
             break;
         case DRAWING_MODE_CIRCLE:
             me._bindCircle();
+            break;
+        case DRAWING_MODE_AREA:
+            me._bindArea();
+            break;
+        default:
+            me._redraw();
             break;
     }
 }
@@ -64,40 +80,145 @@ DrawingManager.prototype.setPosition = function (lat, lng) {
 
 }
 
+DrawingManager.prototype._redraw = function () {
+
+    let me = this;
+
+    me._removeArea();
+    me._removeCenterMarker();
+    me._removeCircle();
+}
+
+DrawingManager.prototype._bindArea = function () {
+
+    let me = this;
+
+    me._removeArea();
+    me._removeCenterMarker();
+    me._removeCircle();
+
+    var createArea = () => {
+
+        me._setDrawing(false);
+
+        const polygonOptions = {
+            map: me.map,
+            strokeColor: me.areaOptions.strokeColor,
+            strokeOpacity: me.areaOptions.strokeOpacity,
+            fillColor: me.areaOptions.fillColor,
+            fillOpacity: me.areaOptions.fillOpacity,
+            strokeWeight: me.areaOptions.strokeWeight,
+            clickable: false,
+            editable: false
+        }
+
+
+        me.area = new google.maps.Polyline(polygonOptions);
+
+        var move = google.maps.event.addListener(me.map, 'mousemove', function (e) {
+            me.area.getPath().push(e.latLng);
+        });
+
+        var moveUp = google.maps.event.addListenerOnce(me.map, 'mouseup', () => {
+
+            google.maps.event.removeListener(move);
+            google.maps.event.removeListener(moveUp);
+
+            var path = me.area.getPath();
+
+            me.area.setMap(null);
+
+            const opts = {
+                map: me.map,
+                strokeColor: me.areaOptions.strokeColor,
+                strokeOpacity: me.areaOptions.strokeOpacity,
+                fillColor: me.areaOptions.fillColor,
+                fillOpacity: me.areaOptions.fillOpacity,
+                strokeWeight: me.areaOptions.strokeWeight,
+                clickable: false,
+                path: path,
+                editable: false
+            }
+
+            google.maps.event.trigger(me, 'draw:area_create', me._convertCoordinates(me.area.getPath().getArray()));
+
+            me.area = new google.maps.Polygon(opts);
+
+            google.maps.event.clearListeners(me.map.getDiv(), 'mousedown');
+
+            me._setDrawing(true);
+
+            me._fitBoundsArea(me.area.getPath().getArray());
+
+
+        });
+    }
+
+    google.maps.event.addDomListener(me.map.getDiv(), 'mousedown', (e) => {
+        console.log('mousedown')
+        createArea();
+    });
+}
+
+DrawingManager.prototype._setDrawing = function (enabled) {
+
+    let me = this;
+
+    me.map.setOptions({
+        draggable: enabled,
+        scrollwheel: enabled,
+        disableDoubleClickZoom: enabled
+    });
+}
+
+DrawingManager.prototype._fitBoundsArea = function (coordinates) {
+
+    let me = this;
+
+    let bounds = new google.maps.LatLngBounds();
+    for (var n = 0; n < coordinates.length; n++) {
+        bounds.extend(coordinates[n]);
+    }
+    me.map.panToBounds(bounds);
+    me.map.fitBounds(bounds);
+}
+
+DrawingManager.prototype._convertCoordinates = function (coordinates) {
+
+    let positions = [];
+
+    for (var n = 0; n < coordinates.length; n++) {
+        let item = coordinates[n];
+        let position = {
+            latitude: item.lat(),
+            longitude: item.lng(),
+        }
+        positions.push(position);
+    }
+    return positions;
+}
 
 
 DrawingManager.prototype._bindMarker = function () {
 
     let me = this;
 
-    if (me._centerMarker) {
-        me._centerMarker.setMap(null);
-        google.maps.event.trigger(me, 'draw:marker_remove', null);
-    }
+    me._removeArea();
+    me._removeCenterMarker();
 
     google.maps.event.clearListeners(me, 'click');
+    google.maps.event.clearListeners(me, 'mousedown');
+    google.maps.event.clearListeners(me, 'mouseup');
 
-
-    if (me.circle) {
-        me.circle.setMap(null);
-        me._vertexMarker.setMap(null);
-    }
+    me._removeCircle();
 
     var createCenterMarker = (e) => {
 
-        if (me._centerMarker) {
-            me._centerMarker.setMap(null);
-            me._centerMarker = null;
-            google.maps.event.trigger(me, 'draw:marker_remove', null);
-        }
+        me._removeCenterMarker();
+        me._removeCircle();
 
         if (e) {
             me._setPosition(e);
-        }
-
-        if (me.circle) {
-            me.circle.setMap(null);
-            me._vertexMarker.setMap(null);
         }
 
 
@@ -117,7 +238,7 @@ DrawingManager.prototype._bindMarker = function () {
                 me.map.setZoom(9);
             }
 
-            google.maps.event.trigger(me, 'draw:marker_create', null);
+            google.maps.event.trigger(me, 'draw:marker_create', me._getPosition());
             me._centerMarker.setCursor('default');
             me.position = null;
         }
@@ -136,23 +257,11 @@ DrawingManager.prototype._bindMarker = function () {
     });
 }
 
-
-DrawingManager.prototype.setEnableDraw = function (enabled) {
-
-    this._enableDraw = enabled;
-}
-
-DrawingManager.prototype.remove = function () { }
-
 DrawingManager.prototype._bindCircle = function () {
 
     var me = this;
 
-    if (me.circle) {
-        me.circle.setMap(null);
-        me._vertexMarker.setMap(null);
-        google.maps.event.trigger(me, 'draw:circle_remove', null);
-    }
+    me._removeCircle();
 
     if (me._centerMarker) {
         me.circle = new google.maps.Circle({
@@ -183,14 +292,54 @@ DrawingManager.prototype._bindCircle = function () {
 
 }
 
+DrawingManager.prototype.setEnableDraw = function (enabled) {
+
+    this._enableDraw = enabled;
+}
+
+DrawingManager.prototype._removeCircle = function () {
+
+    let me = this;
+
+    if (me.circle) {
+        me.circle.setMap(null);
+        me.circle = null;
+        me._vertexMarker.setMap(null);
+    }
+
+}
+
+DrawingManager.prototype._removeCenterMarker = function () {
+
+    let me = this;
+
+
+    if (me._centerMarker) {
+        me._centerMarker.setMap(null);
+        me._centerMarker = null;
+        google.maps.event.trigger(me, 'draw:marker_remove', null);
+    }
+
+}
+
+DrawingManager.prototype._removeArea = function () {
+
+    let me = this;
+
+    if (me.area) {
+        me.area.setMap(null);
+        me.area = null;
+        google.maps.event.trigger(me, 'draw:area_remove', null);
+    }
+}
+
+
 DrawingManager.prototype._createVertexMarker = function () {
 
     let me = this;
 
     me.to = null;
     me.to = me.destination(this._centerMarker.getPosition(), 90, this.radius);
-
-
     me.fillColor = 'white';
 
     let svg = [
@@ -207,7 +356,6 @@ DrawingManager.prototype._createVertexMarker = function () {
         raiseOnDrag: false,
         optimized: true,
     });
-
 
     me._vertexMarker.setMap(me.map);
     me._vertexMarker.setCursor('col-resize');
@@ -275,11 +423,11 @@ DrawingManager.prototype._centerMarkerAddEventListener = function () {
         google.maps.event.trigger(me, 'draw:circle_centre_change', me._getInfo());
     });
 
-    google.maps.event.addListener(me._centerMarker, 'dragend', function (event) {
+    google.maps.event.addListener(me._centerMarker, 'dragend', function () {
         google.maps.event.trigger(me, 'draw:circle_center_complete', me._getInfo());
     });
 
-    google.maps.event.addListener(me._centerMarker, 'click', function (event) {
+    google.maps.event.addListener(me._centerMarker, 'click', function () {
         google.maps.event.trigger(me, 'draw:marker_click', me._getInfo());
     });
 
@@ -385,6 +533,18 @@ DrawingManager.prototype._getInfo = function () {
     };
 
     return info;
+}
+
+DrawingManager.prototype._getPosition = function () {
+
+    let me = this;
+
+    let position = {
+        latitude: me._centerMarker.getPosition().lat(),
+        longitude: me._centerMarker.getPosition().lng()
+    }
+
+    return position;
 }
 
 if (typeof module == 'object') {
